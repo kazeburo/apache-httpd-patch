@@ -1,0 +1,104 @@
+--- httpd-2.2.17.orig/modules/metadata/mod_headers.c	2010-08-25 23:12:46.000000000 +0900
++++ httpd-2.2.17/modules/metadata/mod_headers.c	2011-01-28 12:20:10.000000000 +0900
+@@ -126,6 +126,7 @@
+     ap_regex_t *regex;
+     const char *condition_var;
+     const char *subs;
++    int use_notes;
+ } header_entry;
+ 
+ /* echo_do is used for Header echo to iterate through the request headers*/
+@@ -215,6 +216,16 @@
+     }
+ }
+ 
++static const char *header_request_notes_var(request_rec *r, char *a)
++{
++    const char *s = apr_table_get(r->notes,a);
++
++    if (s)
++        return unwrap_header(r->pool, s);
++    else
++        return "(null)";
++}
++
+ /*
+  * Config routines
+  */
+@@ -477,15 +488,32 @@
+             condition_var = condition_early;
+         }
+         else {
+-            if (strncasecmp(envclause, "env=", 4) != 0) {
+-                return "error: envclause should be in the form env=envar";
++            if ( envclause[0] == 'e' ) {
++                if (strncasecmp(envclause, "env=", 4) != 0) {
++                    return "error: envclause should be in the form env=envar";
++                }
++                if ((envclause[4] == '\0')
++                    || ((envclause[4] == '!') && (envclause[5] == '\0'))) {
++                    return "error: missing environment variable name. "
++                        "envclause should be in the form env=envar ";
++                }
++                condition_var = envclause + 4;
+             }
+-            if ((envclause[4] == '\0')
+-                || ((envclause[4] == '!') && (envclause[5] == '\0'))) {
+-                return "error: missing environment variable name. "
+-                    "envclause should be in the form env=envar ";
++            else if ( envclause[0] == 'n' ) {
++                if (strncasecmp(envclause, "notes=", 6) != 0) {
++                    return "error: envclause should be in the form notes=notesvar";
++                }
++                if ((envclause[6] == '\0')
++                    || ((envclause[6] == '!') && (envclause[7] == '\0'))) {
++                    return "error: missing notes variable name. "
++                        "envclause should be in the form notes=envar ";
++                }
++                condition_var = envclause + 6;
++                new->use_notes = 1;
++            }
++            else {
++                return "error: envclause should be in the form env=env_var or notes=notesvar";
+             }
+-            condition_var = envclause + 4;
+         }
+     }
+ 
+@@ -619,6 +647,7 @@
+     echo_do v;
+     int i;
+     const char *val;
++    apr_table_t *t;
+ 
+     for (i = 0; i < fixup->nelts; ++i) {
+         header_entry *hdr = &((header_entry *) (fixup->elts))[i];
+@@ -634,12 +663,18 @@
+         }
+         /* Have any conditional envar-controlled Header processing to do? */
+         else if (envar && !early) {
++            if ( hdr->use_notes ) {
++                t = r->notes;
++            }
++            else {
++                t = r->subprocess_env;
++            }
+             if (*envar != '!') {
+-                if (apr_table_get(r->subprocess_env, envar) == NULL)
++                if (apr_table_get(t, envar) == NULL)
+                     continue;
+             }
+             else {
+-                if (apr_table_get(r->subprocess_env, &envar[1]) != NULL)
++                if (apr_table_get(t, &envar[1]) != NULL)
+                     continue;
+             }
+         }
+@@ -854,6 +889,7 @@
+     register_format_tag_handler("t", (const void *)header_request_time);
+     register_format_tag_handler("e", (const void *)header_request_env_var);
+     register_format_tag_handler("s", (const void *)header_request_ssl_var);
++    register_format_tag_handler("n", (const void *)header_request_notes_var);
+ 
+     return OK;
+ }
